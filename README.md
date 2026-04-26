@@ -35,11 +35,11 @@ cma-radar parse Z_RADA_I_58446_20251010000000_O_YCCR_ZHDKAZ_RAW_MM.BIN -f txt -o
 ### Batch process a folder
 
 ```bash
-# Export each file to individual NetCDF
+# Default: per-site time-series NetCDF (one file per station)
 cma-radar batch ./data/ -f nc -o ./output/ -w 8
 
-# Merge all files per site into one time-series NetCDF per site
-cma-radar batch ./data/ -f nc --merged -o ./output/ -w 8
+# Merge all sites into a single NetCDF with groups
+cma-radar batch ./data/ --merged -o ./output/ -w 8
 ```
 
 ### Visualize a NetCDF file
@@ -53,7 +53,7 @@ cma-radar visualize ./output/58446_merged.nc -o ./plots/
 | Command | Description | Key Options |
 |---------|-------------|-------------|
 | `parse` | Parse a single `.BIN` file | `-f nc\|txt`, `-o <dir>` |
-| `batch` | Batch process a folder | `-f nc\|txt`, `--merged`, `-w <workers>`, `-o <dir>` |
+| `batch` | Batch process a folder (default: per-site merge) | `-f nc\|txt`, `--merged` (cross-site), `-w <workers>`, `-o <dir>` |
 | `visualize` | Create plots from `.nc` file | `-o <dir>` |
 
 ## Binary File Format
@@ -88,6 +88,8 @@ File naming convention: `Z_RADA_I_<station_id><yyyymmddhhmmss>_O_YCCR_<site_code
 
 ## Output NetCDF Structure
 
+### Per-site merged (`{site_code}_merged.nc`)
+
 ```
 Dimensions:
   time   — number of radial scans
@@ -102,8 +104,28 @@ Variables:
 
 Global Attributes:
   Conventions: "CF-1.8"
-  site_name, latitude, longitude, altitude
-  source_file(s)
+  site_name, site_code, latitude, longitude, altitude
+  source_files
+```
+
+### Cross-site merged (`all_sites_merged.nc`, `--merged` flag)
+
+```
+Root:
+  Dimensions:
+    site   — number of stations
+
+  Variables:
+    site_name  (site)   — station name
+    latitude   (site)   — latitude
+    longitude  (site)   — longitude
+    altitude   (site)   — altitude
+
+  Groups:
+    /<site_code>/       — one group per station
+      Dimensions: time, range
+      Variables: time, range, moment_*, ...
+      Attributes: site_name, site_code, latitude, longitude, altitude
 ```
 
 ## Requirements
