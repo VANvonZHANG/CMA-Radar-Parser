@@ -1,9 +1,11 @@
 """CLI entry point for CMA Radar Parser."""
 
+import datetime
 import logging
 import multiprocessing
 import os
 import re
+from enum import Enum
 from typing import Annotated, Optional
 
 import typer
@@ -28,13 +30,19 @@ FILE_PATTERN = re.compile(
     r"Z_RADA_I_\d{5}_\d{14}_O_YCCR_.*_RAW_MM\.BIN", re.IGNORECASE
 )
 
+MOMENT_NAMES = {
+    1: "Reflectivity (Z)",
+    2: "Velocity (V)",
+    3: "Spectrum Width (W)",
+    4: "Differential Reflectivity (ZDR)",
+    7: "Signal-to-Noise Ratio (SNR)",
+    10: "Linear Depolarization Ratio (LDR)",
+}
 
-class OutputFormat(str):
+
+class OutputFormat(str, Enum):
     nc = "nc"
     txt = "txt"
-
-    def __str__(self):
-        return self.value
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -81,11 +89,28 @@ def _print_summary(cma_data: CmaRadarData) -> None:
     table.add_row("Radials", str(len(cma_data.radials)))
 
     first_radial = cma_data.radials[0]
-    import datetime
-    obs_time = datetime.datetime.utcfromtimestamp(first_radial.header.Seconds)
+    obs_time = datetime.datetime.fromtimestamp(first_radial.header.Seconds, datetime.timezone.utc)
     table.add_row("First Radial Time (UTC)", obs_time.strftime("%Y-%m-%d %H:%M:%S"))
 
+    available_moments = sorted(first_radial.variable.keys())
+    if available_moments:
+        moment_info = ", ".join(
+            f"Key {k} ({MOMENT_NAMES.get(k, '?')})" for k in available_moments
+        )
+        table.add_row("Moments", moment_info)
+
     console.print(table)
+
+
+def _parse_file_worker(filepath: str) -> tuple[str, CmaRadarData | None, str]:
+    """Worker function for multiprocessing: parse one .BIN file."""
+    try:
+        data = read_cma_radar(filepath)
+        if data and data.site_config and data.radials:
+            return (data.site_config.SiteCode, data, filepath)
+        return ("", None, filepath)
+    except Exception:
+        return ("", None, filepath)
 
 
 # -- parse command ----------------------------------------------------------
@@ -95,9 +120,9 @@ def _print_summary(cma_data: CmaRadarData) -> None:
 def parse(
     file: Annotated[str, typer.Argument(help="Path to a .BIN radar file.")],
     format: Annotated[
-        str,
-        typer.Option("--format", "-f", help="Output format: nc or txt."),
-    ] = "nc",
+        OutputFormat,
+        typer.Option("--format", "-f", help="Output format."),
+    ] = OutputFormat.nc,
     output_dir: Annotated[
         Optional[str],
         typer.Option("--output-dir", "-o", help="Output directory."),
@@ -109,10 +134,6 @@ def parse(
 ) -> None:
     """Parse a single radar file and export to NetCDF or text."""
     _setup_logging(verbose)
-
-    if format not in ("nc", "txt"):
-        console.print(f"[red]Error:[/red] Invalid format '{format}'. Use 'nc' or 'txt'.")
-        raise typer.Exit(1)
 
     if not os.path.isfile(file):
         console.print(f"[red]Error:[/red] File not found: {file}")
@@ -127,14 +148,14 @@ def parse(
 
     _print_summary(cma_data)
 
-    ext = "nc" if format == "nc" else "txt"
+    ext = format.value
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
         out_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(file))[0]}.{ext}")
     else:
         out_path = f"{os.path.splitext(file)[0]}.{ext}"
 
-    if format == "nc":
+    if format == OutputFormat.nc:
         write_nc(cma_data, out_path, file)
     else:
         write_txt(cma_data, out_path)
@@ -149,9 +170,9 @@ def parse(
 def batch(
     folder: Annotated[str, typer.Argument(help="Path to folder containing .BIN files.")],
     format: Annotated[
-        str,
-        typer.Option("--format", "-f", help="Output format: nc or txt."),
-    ] = "nc",
+        OutputFormat,
+        typer.Option("--format", "-f", help="Output format."),
+    ] = OutputFormat.nc,
     output_dir: Annotated[
         Optional[str],
         typer.Option("--output-dir", "-o", help="Output directory."),
@@ -172,11 +193,7 @@ def batch(
     """Batch parse radar files in a folder."""
     _setup_logging(verbose)
 
-    if format not in ("nc", "txt"):
-        console.print(f"[red]Error:[/red] Invalid format '{format}'. Use 'nc' or 'txt'.")
-        raise typer.Exit(1)
-
-    if merged and format != "nc":
+    if merged and format != OutputFormat.nc:
         console.print("[red]Error:[/red] --merged only works with --format nc")
         raise typer.Exit(1)
 
@@ -206,16 +223,11 @@ def batch(
             console=console,
         ) as progress:
             task = progress.add_task("Parsing...", total=len(files))
-            for filepath in files:
+            for result in pool.imap_unordered(_parse_file_worker, files):
                 progress.update(task, advance=1)
-                try:
-                    data = read_cma_radar(filepath)
-                    if data and data.site_config and data.radials:
-                        results.append((data.site_config.SiteCode, data, filepath))
-                        continue
-                except Exception as e:
-                    console.print(f"[red]Error parsing {os.path.basename(filepath)}:[/red] {e}")
-                results.append(("", None, filepath))
+                if result[1] is None:
+                    console.print(f"[red]Error parsing {os.path.basename(result[2])}[/red]")
+                results.append(result)
 
     parsed = [(code, data, fp) for code, data, fp in results if data is not None]
     if not parsed:
@@ -235,7 +247,7 @@ def batch(
             out = os.path.join(output_dir or folder, f"{site_code}_merged.nc")
             write_merged_nc(data_list, out, fp_list)
             console.print(f"[green]Merged NetCDF for {site_code}:[/green] {out}")
-    elif format == "nc":
+    elif format == OutputFormat.nc:
         for code, data, fp in parsed:
             base_name = os.path.splitext(os.path.basename(fp))[0]
             if output_dir:

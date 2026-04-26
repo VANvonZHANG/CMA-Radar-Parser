@@ -1,12 +1,15 @@
 """NetCDF export functions for CMA radar data."""
 
 import datetime
+import logging
 import os
 
 import netCDF4
 import numpy as np
 
 from cma_radar.reader import CmaRadarData
+
+logger = logging.getLogger(__name__)
 
 FILL_VALUE = -999.0
 
@@ -107,6 +110,8 @@ def write_merged_nc(
             if timestamp in file_map:
                 unique_filenames.append(file_map[timestamp])
             seen_timestamps.add(timestamp)
+        else:
+            logger.warning("Duplicate timestamp %s found, skipping.", timestamp)
 
     if not unique_data:
         raise ValueError("No data with unique timestamps to write.")
