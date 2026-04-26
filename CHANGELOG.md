@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-26
+
+### Changed
+
+- **`batch` default behavior** — Per-site time-series merging is now the default output (previously required `--merged` flag)
+- **`--merged` flag** — Repurposed to merge all sites into a single NetCDF file using NetCDF groups
+
+### Added
+
+- **`write_cross_site_nc()`** — Multi-site NetCDF export with one group per station:
+  - Root level: `site` dimension with `site_name`, `latitude`, `longitude`, `altitude` index arrays
+  - Per-site groups: independent `time`, `range` dimensions and moment variables
+  - Uses NETCDF4 format (required for groups and variable-length strings)
+- **`_write_merged_data()`** — Shared helper for per-site and cross-site merging, eliminating code duplication
+
+### Fixed
+
+- Restored early `--merged` format validation before parsing phase (prevents unnecessary wait on invalid flag combinations)
+
 ## [0.1.0] - 2026-04-26
 
 Initial release. Refactored from 5 standalone scripts into a unified CLI tool.
@@ -39,4 +58,5 @@ Initial release. Refactored from 5 standalone scripts into a unified CLI tool.
 - Successfully produced 17 merged NetCDF files (26-44 MB each) with 8-worker parallel processing
 - Confirmed graceful handling of 3 known corrupted files
 
+[0.2.0]: https://github.com/VANvonZHANG/CMA-Radar-Parser/releases/tag/v0.2.0
 [0.1.0]: https://github.com/VANvonZHANG/CMA-Radar-Parser/releases/tag/v0.1.0
