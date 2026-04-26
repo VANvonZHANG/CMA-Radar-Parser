@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Superpowers
+docs/superpowers/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output files
+*.nc
+*.txt
+plots/
+
+# Data files
+*.BIN
+*.bin
