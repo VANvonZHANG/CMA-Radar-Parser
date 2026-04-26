@@ -16,7 +16,7 @@ from rich.table import Table
 
 from cma_radar.reader import read_cma_radar, CmaRadarData
 from cma_radar.export.text import write_txt
-from cma_radar.export.netcdf import write_nc, write_merged_nc
+from cma_radar.export.netcdf import write_nc, write_merged_nc, write_cross_site_nc
 from cma_radar.viz.plot import visualize_nc
 
 app = typer.Typer(
@@ -179,7 +179,7 @@ def batch(
     ] = None,
     merged: Annotated[
         bool,
-        typer.Option("--merged", help="Merge by site into single NetCDF per site."),
+        typer.Option("--merged", help="Merge all sites into a single NetCDF file."),
     ] = False,
     workers: Annotated[
         Optional[int],
@@ -236,27 +236,13 @@ def batch(
 
     console.print(f"Successfully parsed [bold]{len(parsed)}[/bold] file(s).")
 
-    if merged:
-        grouped: dict[str, list[tuple[CmaRadarData, str]]] = {}
-        for code, data, fp in parsed:
-            grouped.setdefault(code, []).append((data, fp))
+    # Group by site
+    grouped: dict[str, list[tuple[CmaRadarData, str]]] = {}
+    for code, data, fp in parsed:
+        grouped.setdefault(code, []).append((data, fp))
 
-        for site_code, items in grouped.items():
-            data_list = [d for d, _ in items]
-            fp_list = [f for _, f in items]
-            out = os.path.join(output_dir or folder, f"{site_code}_merged.nc")
-            write_merged_nc(data_list, out, fp_list)
-            console.print(f"[green]Merged NetCDF for {site_code}:[/green] {out}")
-    elif format == OutputFormat.nc:
-        for code, data, fp in parsed:
-            base_name = os.path.splitext(os.path.basename(fp))[0]
-            if output_dir:
-                out = os.path.join(output_dir, f"{base_name}.nc")
-            else:
-                out = f"{os.path.splitext(fp)[0]}.nc"
-            write_nc(data, out, fp)
-            console.print(f"[green]Written:[/green] {out}")
-    else:
+    if format == OutputFormat.txt:
+        # Text: no merging, write individual files
         for code, data, fp in parsed:
             base_name = os.path.splitext(os.path.basename(fp))[0]
             if output_dir:
@@ -264,6 +250,21 @@ def batch(
             else:
                 out = f"{os.path.splitext(fp)[0]}.txt"
             write_txt(data, out)
+        console.print(f"[green]Written {len(parsed)} text file(s).[/green]")
+    elif merged:
+        # Cross-site merge: all sites in one NetCDF
+        out = os.path.join(output_dir or folder, "all_sites_merged.nc")
+        write_cross_site_nc(grouped, out)
+        console.print(f"[green]Cross-site merged NetCDF:[/green] {out}")
+        console.print(f"  Contains {len(grouped)} site(s): {', '.join(sorted(grouped.keys()))}")
+    else:
+        # Default: per-site time-series NetCDF
+        for site_code, items in grouped.items():
+            data_list = [d for d, _ in items]
+            fp_list = [f for _, f in items]
+            out = os.path.join(output_dir or folder, f"{site_code}_merged.nc")
+            write_merged_nc(data_list, out, fp_list)
+            console.print(f"[green]Merged NetCDF for {site_code}:[/green] {out}")
 
     console.print("[bold green]Batch processing complete.[/bold green]")
 
