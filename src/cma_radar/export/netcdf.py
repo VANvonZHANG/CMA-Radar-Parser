@@ -87,7 +87,7 @@ def _apply_quality_check(moment_array: np.ndarray, key: int) -> np.ndarray:
     return arr
 
 
-def write_nc(cma_data: CmaRadarData, output_filename: str, source_filename: str) -> None:
+def write_nc(cma_data: CmaRadarData, output_filename: str, source_filename: str, quality_check: bool = False) -> None:
     """Writes parsed CMA radar data to a single-file NetCDF."""
     if not cma_data.radials:
         raise ValueError("No data to write.")
@@ -144,7 +144,10 @@ def write_nc(cma_data: CmaRadarData, output_filename: str, source_filename: str)
             time_values.append(radial.header.Seconds)
             for key, var in moment_vars.items():
                 if key in radial.variable:
-                    var[i, :] = radial.variable[key].value
+                    moment_value = radial.variable[key].value
+                    if quality_check:
+                        moment_value = _apply_quality_check(moment_value, key)
+                    var[i, :] = moment_value
                 else:
                     var[i, :] = np.full(n_gates, FILL_VALUE)
 
@@ -219,6 +222,7 @@ def _write_merged_data(
     nc_or_grp,
     all_data: list[CmaRadarData],
     source_filenames: list[str] | None,
+    quality_check: bool = False,
 ) -> None:
     """Shared helper that writes merged time-series data into a NetCDF Dataset or Group.
 
@@ -231,6 +235,8 @@ def _write_merged_data(
         source_filenames: Optional list of source filenames corresponding to *all_data*
             entries.  When provided, a ``source_files`` attribute is set on the
             group/dataset.  Pass ``None`` when the caller already sets this attribute.
+        quality_check: If True, apply _apply_quality_check to moment values before
+            writing them to the NetCDF file.
     """
     unique_data, unique_filenames, max_n_gates = _sort_and_dedup(
         all_data, source_filenames
@@ -300,6 +306,8 @@ def _write_merged_data(
             if key in data.radials[0].variable:
                 moment_value = data.radials[0].variable[key].value
                 n_gates_current = len(moment_value)
+                if quality_check:
+                    moment_value = _apply_quality_check(moment_value, key)
                 var[i, :n_gates_current] = moment_value
 
     time_var[:] = time_values
@@ -309,6 +317,7 @@ def write_merged_nc(
     all_data: list[CmaRadarData],
     output_filename: str,
     source_filenames: list[str],
+    quality_check: bool = False,
 ) -> None:
     """Aggregates data from multiple CmaRadarData objects into a single time-series NetCDF."""
     if not all_data:
@@ -327,18 +336,21 @@ def write_merged_nc(
 
         nc.history = f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')} - File created"
 
-        _write_merged_data(nc, all_data, source_filenames)
+        _write_merged_data(nc, all_data, source_filenames, quality_check=quality_check)
 
 
 def write_cross_site_nc(
     grouped_data: dict[str, list[tuple[CmaRadarData, str]]],
     output_filename: str,
+    quality_check: bool = False,
 ) -> None:
     """Merge all sites into a single NetCDF file, one group per site.
 
     Args:
         grouped_data: Dict mapping site_code to list of (CmaRadarData, source_filename).
         output_filename: Output NetCDF file path.
+        quality_check: If True, apply _apply_quality_check to moment values before
+            writing them to the NetCDF file.
     """
     if not grouped_data:
         raise ValueError("No data to write.")
@@ -380,12 +392,13 @@ def write_cross_site_nc(
             data_list = [d for d, _ in items]
             grp = nc.createGroup(site_code)
 
-            _write_merged_data(grp, data_list, None)
+            _write_merged_data(grp, data_list, None, quality_check=quality_check)
 
 def write_cfradial_nc(
     all_data: list[CmaRadarData],
     output_filename: str,
     source_filenames: list[str],
+    quality_check: bool = False,
 ) -> None:
     """Export CMA radar data to CfRadial 2.0 format NetCDF.
 
@@ -620,14 +633,8 @@ def write_cfradial_nc(
                 if key in radial.variable:
                     moment_value = radial.variable[key].value.copy()
                     n_gates_current = len(moment_value)
-
-                    # Replace manufacturer-specific marker values with _FillValue
-                    # ZHDKAZ uses -200 as blind-zone marker for all moments
-                    moment_value[moment_value == -200.0] = FILL_VALUE
-                    # ZHDKAZ uses -100 as no-reliable-signal marker for velocity/spectrum-width
-                    if key in (2, 3):
-                        moment_value[moment_value == -100.0] = FILL_VALUE
-
+                    if quality_check:
+                        moment_value = _apply_quality_check(moment_value, key)
                     var[i, :n_gates_current] = moment_value
 
         # Write coordinate data
