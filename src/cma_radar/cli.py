@@ -16,7 +16,7 @@ from rich.table import Table
 
 from cma_radar.reader import read_cma_radar, CmaRadarData
 from cma_radar.export.text import write_txt
-from cma_radar.export.netcdf import write_nc, write_merged_nc, write_cross_site_nc
+from cma_radar.export.netcdf import write_nc, write_merged_nc, write_cross_site_nc, write_cfradial_nc
 from cma_radar.viz.plot import visualize_nc
 
 app = typer.Typer(
@@ -34,14 +34,16 @@ MOMENT_NAMES = {
     1: "Reflectivity (Z)",
     2: "Velocity (V)",
     3: "Spectrum Width (W)",
-    4: "Differential Reflectivity (ZDR)",
+    4: "Signal-to-Noise Ratio (SNR)",
     7: "Signal-to-Noise Ratio (SNR)",
     10: "Linear Depolarization Ratio (LDR)",
+    33: "Differential Reflectivity (ZDR)",
 }
 
 
 class OutputFormat(str, Enum):
     nc = "nc"
+    cfradial = "cfradial"
     txt = "txt"
 
 
@@ -193,7 +195,7 @@ def batch(
     """Batch parse radar files in a folder."""
     _setup_logging(verbose)
 
-    if merged and format != OutputFormat.nc:
+    if merged and format not in (OutputFormat.nc,):
         console.print("[red]Error:[/red] --merged only works with --format nc")
         raise typer.Exit(1)
 
@@ -257,6 +259,14 @@ def batch(
         write_cross_site_nc(grouped, out)
         console.print(f"[green]Cross-site merged NetCDF:[/green] {out}")
         console.print(f"  Contains {len(grouped)} site(s): {', '.join(sorted(grouped.keys()))}")
+    elif format == OutputFormat.cfradial:
+        # CfRadial 2.0: per-site time-series with groups
+        for site_code, items in grouped.items():
+            data_list = [d for d, _ in items]
+            fp_list = [f for _, f in items]
+            out = os.path.join(output_dir or folder, f"{site_code}_cfradial.nc")
+            write_cfradial_nc(data_list, out, fp_list)
+            console.print(f"[green]CfRadial NetCDF for {site_code}:[/green] {out}")
     else:
         # Default: per-site time-series NetCDF
         for site_code, items in grouped.items():
