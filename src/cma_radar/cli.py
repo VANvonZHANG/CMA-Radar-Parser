@@ -133,7 +133,7 @@ def parse(
         bool,
         typer.Option(
             "--quality-check",
-            help="Replace out-of-range moment values with NaN (default: off).",
+            help="Replace out-of-range moment values with _FillValue (-999.0) (default: off).",
         ),
     ] = False,
     verbose: Annotated[
@@ -201,7 +201,7 @@ def batch(
         bool,
         typer.Option(
             "--quality-check",
-            help="Replace out-of-range moment values with NaN (default: off).",
+            help="Replace out-of-range moment values with _FillValue (-999.0) (default: off).",
         ),
     ] = False,
     verbose: Annotated[
