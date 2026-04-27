@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-27
+
+### Added
+
+- **CfRadial 2.0 export** (`write_cfradial_nc()`) — Exports CMA radar data to CfRadial-2.0 compliant NetCDF:
+  - Root group with global metadata: `Conventions: "CfRadial-2.0"`, `instrument_name`, `site_name`, `latitude`, `longitude`, `altitude`, `time_coverage_start/end`, `field_names`
+  - Single sweep group `sweep_0001` containing all vertical-pointing time-series data
+  - Coordinate variables: `time` (seconds since first ray), `range` (m), `elevation` (90°), `azimuth` (0°)
+  - Field variables with CF standard names: `DBZH`, `VRADH`, `WRADH`, `SNR` (only exported if present in data)
+  - Optional metadata groups: `radar_parameters` (beam width, wavelength, antenna gain) and `calibration_parameters` (sky noise, calibration offset)
+  - Uses NETCDF4 format (groups require it)
+  - CLI: `cma-radar batch <folder> --format cfradial`
+- **Data quality control** (`--quality-check` flag) — Optional validation of moment values against physically reasonable ranges:
+  - Defines `QUALITY_RANGES` for 8 DataType keys (Reflectivity, Velocity, Spectrum Width, SNR, LDR, ZDR)
+  - Replaces out-of-range values with `_FillValue` (-999.0), automatically masked by NetCDF readers
+  - Available for both `parse` and `batch` commands; off by default to preserve raw data
+  - Handles manufacturer-specific marker values: ZHDKAZ uses `-200` (blind zone) and `-100` (no signal); HMBKPS uses `NaN`
+- **`_sort_and_dedup()`** helper — Extracted shared sort/dedup logic for reuse across export functions
+
+### Fixed
+
+- Corrected `MOMENT_NAMES` DataType mapping: key `4` = SNR (was incorrectly ZDR)
+- Added keys `33` (ZDR) and `34` (LDR) to `MOMENT_NAMES`
+- Fixed `_sort_and_dedup()` to preserve first filename when duplicate timestamps exist
+
 ## [0.2.0] - 2026-04-26
 
 ### Changed
@@ -58,5 +83,6 @@ Initial release. Refactored from 5 standalone scripts into a unified CLI tool.
 - Successfully produced 17 merged NetCDF files (26-44 MB each) with 8-worker parallel processing
 - Confirmed graceful handling of 3 known corrupted files
 
+[0.3.0]: https://github.com/VANvonZHANG/CMA-Radar-Parser/releases/tag/v0.3.0
 [0.2.0]: https://github.com/VANvonZHANG/CMA-Radar-Parser/releases/tag/v0.2.0
 [0.1.0]: https://github.com/VANvonZHANG/CMA-Radar-Parser/releases/tag/v0.1.0
