@@ -357,6 +357,16 @@ def write_cfradial_nc(
     first_data = unique_data[0]
     n_time = len(unique_data)
 
+    # Validate all data is from the same site
+    site_codes = {
+        d.site_config.SiteCode for d in unique_data if d.site_config
+    }
+    if len(site_codes) > 1:
+        raise ValueError(
+            f"Mixed site codes found: {site_codes}. "
+            "CfRadial export requires single-site data."
+        )
+
     # Determine which fields are present in the data
     present_keys = set()
     for data in unique_data:
@@ -398,6 +408,10 @@ def write_cfradial_nc(
         nc.setncattr("field_names", field_names)
 
         nc.history = f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')} - File created"
+        if source_filenames:
+            nc.source_files = ", ".join(
+                os.path.basename(f) for f in source_filenames
+            )
 
         # --- Root group dimensions and variables ---
         nc.createDimension("sweep", 1)
