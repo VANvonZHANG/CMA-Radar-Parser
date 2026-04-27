@@ -95,14 +95,14 @@ def _sort_and_dedup(
         key=lambda d: d.radials[0].header.Seconds if d and d.radials else float("inf"),
     )
 
-    # Build timestamp -> filename map for dedup tracking
+    # Build timestamp -> filename map for dedup tracking (keep first)
     file_map: dict[float, str] = {}
     if source_filenames is not None:
-        file_map = {
-            d.radials[0].header.Seconds: f
-            for d, f in zip(sorted_data, source_filenames)
-            if d and d.radials
-        }
+        for d, f in zip(sorted_data, source_filenames):
+            if d and d.radials:
+                ts = d.radials[0].header.Seconds
+                if ts not in file_map:
+                    file_map[ts] = f
 
     # Deduplicate by timestamp (keep first)
     unique_data: list[CmaRadarData] = []
