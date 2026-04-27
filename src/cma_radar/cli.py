@@ -129,6 +129,13 @@ def parse(
         Optional[str],
         typer.Option("--output-dir", "-o", help="Output directory."),
     ] = None,
+    quality_check: Annotated[
+        bool,
+        typer.Option(
+            "--quality-check",
+            help="Replace out-of-range moment values with NaN (default: off).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Enable debug logging."),
@@ -161,7 +168,7 @@ def parse(
         console.print("[red]Error:[/red] --format cfradial is only supported for batch processing.")
         raise typer.Exit(1)
     elif format == OutputFormat.nc:
-        write_nc(cma_data, out_path, file)
+        write_nc(cma_data, out_path, file, quality_check=quality_check)
     else:
         write_txt(cma_data, out_path)
 
@@ -190,6 +197,13 @@ def batch(
         Optional[int],
         typer.Option("--workers", "-w", help="Number of worker processes."),
     ] = None,
+    quality_check: Annotated[
+        bool,
+        typer.Option(
+            "--quality-check",
+            help="Replace out-of-range moment values with NaN (default: off).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option("--verbose", "-v", help="Enable debug logging."),
@@ -259,7 +273,7 @@ def batch(
     elif merged:
         # Cross-site merge: all sites in one NetCDF
         out = os.path.join(output_dir or folder, "all_sites_merged.nc")
-        write_cross_site_nc(grouped, out)
+        write_cross_site_nc(grouped, out, quality_check=quality_check)
         console.print(f"[green]Cross-site merged NetCDF:[/green] {out}")
         console.print(f"  Contains {len(grouped)} site(s): {', '.join(sorted(grouped.keys()))}")
     elif format == OutputFormat.cfradial:
@@ -268,7 +282,7 @@ def batch(
             data_list = [d for d, _ in items]
             fp_list = [f for _, f in items]
             out = os.path.join(output_dir or folder, f"{site_code}_cfradial.nc")
-            write_cfradial_nc(data_list, out, fp_list)
+            write_cfradial_nc(data_list, out, fp_list, quality_check=quality_check)
             console.print(f"[green]CfRadial NetCDF for {site_code}:[/green] {out}")
     else:
         # Default: per-site time-series NetCDF
@@ -276,7 +290,7 @@ def batch(
             data_list = [d for d, _ in items]
             fp_list = [f for _, f in items]
             out = os.path.join(output_dir or folder, f"{site_code}_merged.nc")
-            write_merged_nc(data_list, out, fp_list)
+            write_merged_nc(data_list, out, fp_list, quality_check=quality_check)
             console.print(f"[green]Merged NetCDF for {site_code}:[/green] {out}")
 
     console.print("[bold green]Batch processing complete.[/bold green]")
