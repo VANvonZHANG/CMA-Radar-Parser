@@ -25,7 +25,7 @@ Built as a Python package (`cma-radar-parser`) with a Typer CLI.
 
 - GenericHeader (32 bytes, skipped) → SiteConfig (72B) → RadarConfig (152B) → TaskConfig (256B) → CutConfig×N (256B each) → RadialData blocks
 - File pattern: `Z_RADA_I_<5-digit-id><14-digit-timestamp>_O_YCCR_*_RAW_MM.BIN`
-- Moment keys: 1=Reflectivity, 2=Velocity, 3=SpectrumWidth, 4=ZDR, 7=SNR, 10=LDR
+- Moment keys: 1=Reflectivity, 2=Velocity, 3=SpectrumWidth, 4=SNR, 7=SNR, 10=LDR, 33=ZDR, 34=LDR
 
 ## Environment
 
