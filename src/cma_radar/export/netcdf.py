@@ -78,6 +78,70 @@ def write_nc(cma_data: CmaRadarData, output_filename: str, source_filename: str)
         time_var[:] = time_values
 
 
+def _sort_and_dedup(
+    all_data: list[CmaRadarData],
+    source_filenames: list[str] | None,
+) -> tuple[list[CmaRadarData], list[str], int]:
+    """Sort by timestamp, deduplicate, and compute max range gates.
+
+    Returns:
+        deduped_data: Sorted list with duplicate timestamps removed (keeps first).
+        deduped_filenames: Corresponding source filenames.
+        max_n_gates: Maximum number of range gates across all files.
+    """
+    # Sort by timestamp
+    sorted_data = sorted(
+        all_data,
+        key=lambda d: d.radials[0].header.Seconds if d and d.radials else float("inf"),
+    )
+
+    # Build timestamp -> filename map for dedup tracking
+    file_map: dict[float, str] = {}
+    if source_filenames is not None:
+        file_map = {
+            d.radials[0].header.Seconds: f
+            for d, f in zip(sorted_data, source_filenames)
+            if d and d.radials
+        }
+
+    # Deduplicate by timestamp (keep first)
+    unique_data: list[CmaRadarData] = []
+    unique_filenames: list[str] = []
+    seen_timestamps: set[float] = set()
+
+    for data in sorted_data:
+        if not (data and data.radials):
+            continue
+        timestamp = data.radials[0].header.Seconds
+        if timestamp not in seen_timestamps:
+            unique_data.append(data)
+            if timestamp in file_map:
+                unique_filenames.append(file_map[timestamp])
+            seen_timestamps.add(timestamp)
+        else:
+            logger.warning("Duplicate timestamp %s found, skipping.", timestamp)
+
+    if not unique_data:
+        raise ValueError("No data with unique timestamps to write.")
+
+    # Compute max range gates
+    max_n_gates = 0
+    for data in unique_data:
+        try:
+            current_max = max(
+                mom.header.BinNumber for mom in data.radials[0].variable.values()
+            )
+            if current_max > max_n_gates:
+                max_n_gates = current_max
+        except (ValueError, IndexError):
+            continue
+
+    if max_n_gates == 0:
+        raise ValueError("Could not determine a valid number of range gates from any file.")
+
+    return unique_data, unique_filenames, max_n_gates
+
+
 def _write_merged_data(
     nc_or_grp,
     all_data: list[CmaRadarData],
@@ -95,54 +159,9 @@ def _write_merged_data(
             entries.  When provided, a ``source_files`` attribute is set on the
             group/dataset.  Pass ``None`` when the caller already sets this attribute.
     """
-    # Sort by timestamp
-    all_data = sorted(
-        all_data,
-        key=lambda d: d.radials[0].header.Seconds if d and d.radials else float("inf"),
+    unique_data, unique_filenames, max_n_gates = _sort_and_dedup(
+        all_data, source_filenames
     )
-
-    # Deduplication
-    file_map: dict[float, str] = {}
-    if source_filenames is not None:
-        file_map = {
-            d.radials[0].header.Seconds: f
-            for d, f in zip(all_data, source_filenames)
-            if d and d.radials
-        }
-
-    unique_data: list[CmaRadarData] = []
-    unique_filenames: list[str] = []
-    seen_timestamps: set[float] = set()
-
-    for data in all_data:
-        if not (data and data.radials):
-            continue
-        timestamp = data.radials[0].header.Seconds
-        if timestamp not in seen_timestamps:
-            unique_data.append(data)
-            if timestamp in file_map:
-                unique_filenames.append(file_map[timestamp])
-            seen_timestamps.add(timestamp)
-        else:
-            logger.warning("Duplicate timestamp %s found, skipping.", timestamp)
-
-    if not unique_data:
-        raise ValueError("No data with unique timestamps to write.")
-
-    # Gate count calculation
-    max_n_gates = 0
-    for data in unique_data:
-        try:
-            current_max = max(
-                mom.header.BinNumber for mom in data.radials[0].variable.values()
-            )
-            if current_max > max_n_gates:
-                max_n_gates = current_max
-        except (ValueError, IndexError):
-            continue
-
-    if max_n_gates == 0:
-        raise ValueError("Could not determine a valid number of range gates from any file.")
 
     first_data = unique_data[0]
     n_time = len(unique_data)
