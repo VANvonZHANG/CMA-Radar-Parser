@@ -41,6 +41,51 @@ CFRADIAL_FIELD_MAP = {
     },
 }
 
+# Physically reasonable min/max ranges for quality checking
+QUALITY_RANGES = {
+    1: {"min": -50.0, "max": 30.0},   # Reflectivity (dBZ)
+    2: {"min": -30.0, "max": 30.0},   # Velocity (m/s)
+    3: {"min": 0.0, "max": 20.0},     # Spectrum Width (m/s)
+    4: {"min": -30.0, "max": 60.0},   # SNR (dB)
+    7: {"min": -30.0, "max": 60.0},   # SNR (dB)
+    10: {"min": -40.0, "max": 10.0},  # LDR (dB)
+    33: {"min": -10.0, "max": 10.0},  # ZDR (dB)
+    34: {"min": -40.0, "max": 10.0},  # LDR (dB)
+}
+
+
+def _apply_quality_check(moment_array: np.ndarray, key: int) -> np.ndarray:
+    """Replace physically unreasonable values with FILL_VALUE.
+
+    Parameters
+    ----------
+    moment_array : np.ndarray
+        The moment data array to check.
+    key : int
+        The DataType key used to look up quality ranges.
+
+    Returns
+    -------
+    np.ndarray
+        A copy of the array with out-of-range values replaced by FILL_VALUE,
+        or the original array unchanged if the key is not in QUALITY_RANGES.
+    """
+    if key not in QUALITY_RANGES:
+        return moment_array
+
+    arr = moment_array.copy()
+    qrange = QUALITY_RANGES[key]
+    mask = (arr < qrange["min"]) | (arr > qrange["max"])
+    n_out = int(mask.sum())
+    if n_out > 0:
+        logger.debug(
+            "Quality check: %d values out of range for key %d "
+            "(min=%.1f, max=%.1f)",
+            n_out, key, qrange["min"], qrange["max"]
+        )
+        arr[mask] = FILL_VALUE
+    return arr
+
 
 def write_nc(cma_data: CmaRadarData, output_filename: str, source_filename: str) -> None:
     """Writes parsed CMA radar data to a single-file NetCDF."""
