@@ -13,6 +13,34 @@ logger = logging.getLogger(__name__)
 
 FILL_VALUE = -999.0
 
+# CfRadial 2.0 field mapping for CMA DataType keys
+CFRADIAL_FIELD_MAP = {
+    1: {
+        "var_name": "DBZH",
+        "standard_name": "equivalent_reflectivity_factor",
+        "long_name": "Equivalent reflectivity factor",
+        "units": "dBZ",
+    },
+    2: {
+        "var_name": "VRADH",
+        "standard_name": "radial_velocity_of_scatterers_away_from_instrument",
+        "long_name": "Radial velocity of scatterers away from instrument",
+        "units": "m/s",
+    },
+    3: {
+        "var_name": "WRADH",
+        "standard_name": "doppler_spectrum_width",
+        "long_name": "Doppler spectrum width",
+        "units": "m/s",
+    },
+    4: {
+        "var_name": "SNR",
+        "standard_name": "signal_to_noise_ratio",
+        "long_name": "Signal to noise ratio",
+        "units": "dB",
+    },
+}
+
 
 def write_nc(cma_data: CmaRadarData, output_filename: str, source_filename: str) -> None:
     """Writes parsed CMA radar data to a single-file NetCDF."""
@@ -308,3 +336,268 @@ def write_cross_site_nc(
             grp = nc.createGroup(site_code)
 
             _write_merged_data(grp, data_list, None)
+
+def write_cfradial_nc(
+    all_data: list[CmaRadarData],
+    output_filename: str,
+    source_filenames: list[str],
+) -> None:
+    """Export CMA radar data to CfRadial 2.0 format NetCDF.
+
+    Creates a NetCDF4 file with a root group (global metadata) and a single
+    sweep group (sweep_0001) containing all vertical-pointing time-series data.
+
+    Only exports DataType keys present in CFRADIAL_FIELD_MAP (1, 2, 3, 4).
+    Unknown DataType keys are silently ignored.
+    """
+    if not all_data:
+        raise ValueError("No data to write.")
+
+    unique_data, _, max_n_gates = _sort_and_dedup(all_data, source_filenames)
+    first_data = unique_data[0]
+    n_time = len(unique_data)
+
+    # Determine which fields are present in the data
+    present_keys = set()
+    for data in unique_data:
+        if data.radials:
+            present_keys.update(data.radials[0].variable.keys())
+
+    export_keys = sorted(k for k in present_keys if k in CFRADIAL_FIELD_MAP)
+    if not export_keys:
+        raise ValueError("No recognized moment types found for CfRadial export.")
+
+    field_names = [CFRADIAL_FIELD_MAP[k]["var_name"] for k in export_keys]
+
+    with netCDF4.Dataset(output_filename, "w", format="NETCDF4") as nc:
+        site = first_data.site_config
+        radar = first_data.radar_config
+        cut = first_data.cut_configs[0] if first_data.cut_configs else None
+
+        # --- Root group global attributes ---
+        nc.setncattr("Conventions", "CfRadial-2.0")
+        nc.setncattr("version", "2.0")
+        nc.setncattr("instrument_type", "radar")
+        nc.setncattr("platform_type", "fixed")
+        nc.setncattr("platform_is_mobile", "false")
+        nc.setncattr("instrument_name", site.SiteName if site else "")
+        nc.setncattr("site_name", site.SiteCode if site else "")
+        nc.setncattr("latitude", float(site.Latitude) if site else 0.0)
+        nc.setncattr("longitude", float(site.Longitude) if site else 0.0)
+        nc.setncattr("altitude", float(site.AntennaHeight) if site else 0.0)
+
+        # Time coverage
+        first_time = datetime.datetime.fromtimestamp(
+            unique_data[0].radials[0].header.Seconds, datetime.timezone.utc
+        )
+        last_time = datetime.datetime.fromtimestamp(
+            unique_data[-1].radials[0].header.Seconds, datetime.timezone.utc
+        )
+        nc.setncattr("time_coverage_start", first_time.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        nc.setncattr("time_coverage_end", last_time.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        nc.setncattr("field_names", field_names)
+
+        nc.history = f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')} - File created"
+
+        # --- Root group dimensions and variables ---
+        nc.createDimension("sweep", 1)
+        nc.createDimension("frequency", 1)
+
+        nc.createVariable("volume_number", "i4")[:] = 0
+
+        t_start_var = nc.createVariable("time_coverage_start", str)
+        t_start_var[0] = first_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        t_end_var = nc.createVariable("time_coverage_end", str)
+        t_end_var[0] = last_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        sweep_names = nc.createVariable("sweep_group_name", str, ("sweep",))
+        sweep_names[:] = np.array(["sweep_0001"], dtype=object)
+
+        sweep_fixed = nc.createVariable("sweep_fixed_angle", "f4", ("sweep",))
+        sweep_fixed[:] = [90.0]
+
+        if radar and radar.Frequency and radar.Frequency > 0:
+            freq_var = nc.createVariable("frequency", "f4", ("frequency",))
+            freq_var[:] = [radar.Frequency]
+
+        # --- Sweep group ---
+        sweep_grp = nc.createGroup("sweep_0001")
+        sweep_grp.createDimension("time", n_time)
+        sweep_grp.createDimension("range", max_n_gates)
+
+        # Reference time string for time coordinate
+        ref_time_str = first_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Time coordinate
+        time_var = sweep_grp.createVariable("time", "f8", ("time",))
+        time_var.setncattr("standard_name", "time")
+        time_var.setncattr("units", f"seconds since {ref_time_str}")
+        time_var.setncattr("calendar", "gregorian")
+
+        # Range coordinate
+        start_range = cut.StartRange if cut else 0
+        gate_spacing = radar.DistanceSolution if radar else 30
+        range_values = start_range + np.arange(max_n_gates) * gate_spacing
+
+        range_var = sweep_grp.createVariable("range", "f4", ("range",))
+        range_var.setncattr("standard_name", "projection_range_coordinate")
+        range_var.setncattr("long_name", "range_to_measurement_volume")
+        range_var.setncattr("units", "m")
+        range_var.setncattr("axis", "radial_range_coordinate")
+        range_var.setncattr("spacing_is_constant", "true")
+        range_var.setncattr("meters_to_center_of_first_gate", float(start_range + gate_spacing / 2))
+        range_var.setncattr("meters_between_gates", float(gate_spacing))
+        range_var[:] = range_values
+
+        # Elevation coordinate
+        elev_var = sweep_grp.createVariable("elevation", "f4", ("time",))
+        elev_var.setncattr("standard_name", "ray_elevation_angle")
+        elev_var.setncattr("long_name", "elevation_angle_from_horizontal_plane")
+        elev_var.setncattr("units", "degrees")
+        elev_var.setncattr("axis", "radial_elevation_coordinate")
+
+        # Azimuth coordinate
+        az_var = sweep_grp.createVariable("azimuth", "f4", ("time",))
+        az_var.setncattr("standard_name", "ray_azimuth_angle")
+        az_var.setncattr("long_name", "azimuth_angle_from_true_north")
+        az_var.setncattr("units", "degrees")
+        az_var.setncattr("axis", "radial_azimuth_coordinate")
+
+        # Sweep metadata variables
+        sweep_num = sweep_grp.createVariable("sweep_number", "i4")
+        sweep_num[:] = 0
+
+        sweep_mode = sweep_grp.createVariable("sweep_mode", str)
+        sweep_mode[0] = "vertical_pointing"
+
+        fixed_angle = sweep_grp.createVariable("fixed_angle", "f4")
+        fixed_angle.setncattr("units", "degrees")
+        fixed_angle[:] = 90.0
+
+        scan_rate = sweep_grp.createVariable("scan_rate", "f4", ("time",))
+        scan_rate.setncattr("units", "degrees/s")
+
+        nyq_var = sweep_grp.createVariable("nyquist_velocity", "f4", ("time",))
+        nyq_var.setncattr("units", "m/s")
+
+        prt_var = sweep_grp.createVariable("prt", "f4", ("time",))
+        prt_var.setncattr("units", "seconds")
+
+        # Pulse width
+        pw_var = sweep_grp.createVariable("pulse_width", "f4", ("time",))
+        pw_var.setncattr("units", "seconds")
+
+        # --- Field data variables ---
+        field_vars = {}
+        for key in export_keys:
+            cfg = CFRADIAL_FIELD_MAP[key]
+            fv = sweep_grp.createVariable(
+                cfg["var_name"],
+                "f4",
+                ("time", "range"),
+                fill_value=np.nan,
+            )
+            fv.setncattr("standard_name", cfg["standard_name"])
+            fv.setncattr("long_name", cfg["long_name"])
+            fv.setncattr("units", cfg["units"])
+            fv.setncattr("coordinates", "elevation azimuth range")
+            field_vars[key] = fv
+
+        # --- Write per-ray data ---
+        time_values = []
+        scan_rate_vals = []
+        nyq_vals = []
+        prt_vals = []
+        pw_vals = []
+        elev_vals = []
+        az_vals = []
+
+        for i, data in enumerate(unique_data):
+            radial = data.radials[0]
+            header = radial.header
+
+            # Time: seconds since reference
+            time_values.append(header.Seconds + header.Microseconds / 1e6)
+            elev_vals.append(header.Elevation)
+            az_vals.append(header.Azimuth)
+
+            # Metadata from CutConfig
+            data_cut = data.cut_configs[0] if data.cut_configs else None
+            scan_rate_vals.append(data_cut.ScanSpeed if data_cut else 0.0)
+            nyq_vals.append(data_cut.NyquistSpeed if data_cut else 0.0)
+
+            if data_cut and data_cut.PRF1 and data_cut.PRF1 > 0:
+                prt_vals.append(1.0 / data_cut.PRF1)
+            else:
+                prt_vals.append(np.nan)
+
+            # Pulse width
+            task = data.task_config
+            pw_ns = 0
+            if data_cut and task:
+                mode = data_cut.PulseWidthCombinationMode
+                if mode == 1:
+                    pw_ns = task.PulseWidth1
+                elif mode == 2:
+                    pw_ns = task.PulseWidth2
+                elif mode == 3:
+                    pw_ns = task.PulseWidth3
+                elif mode == 4:
+                    pw_ns = task.PulseWidth4
+            pw_vals.append(pw_ns / 1e9 if pw_ns > 0 else np.nan)
+
+            # Field data
+            for key, var in field_vars.items():
+                if key in radial.variable:
+                    moment_value = radial.variable[key].value
+                    n_gates_current = len(moment_value)
+                    var[i, :n_gates_current] = moment_value
+
+        # Write coordinate data
+        time_var[:] = np.array(time_values) - time_values[0]
+        elev_var[:] = elev_vals
+        az_var[:] = az_vals
+        scan_rate[:] = scan_rate_vals
+        nyq_var[:] = nyq_vals
+        prt_var[:] = prt_vals
+        pw_var[:] = pw_vals
+
+        # --- Optional metadata groups ---
+        if radar:
+            rp = nc.createGroup("radar_parameters")
+            rp.setncattr("comment", "Radar parameters from CMA binary configuration")
+
+            if radar.BeamWidthHori and radar.BeamWidthHori > 0:
+                bw_h = rp.createVariable("radar_beam_width_h", "f4")
+                bw_h.setncattr("units", "degrees")
+                bw_h[:] = radar.BeamWidthHori
+
+            if radar.BeamWidthVert and radar.BeamWidthVert > 0:
+                bw_v = rp.createVariable("radar_beam_width_v", "f4")
+                bw_v.setncattr("units", "degrees")
+                bw_v[:] = radar.BeamWidthVert
+
+            if radar.Wavelength and radar.Wavelength > 0:
+                wl = rp.createVariable("radar_wavelength", "f4")
+                wl.setncattr("units", "m")
+                wl[:] = radar.Wavelength
+
+            if radar.AntennaGain and radar.AntennaGain > 0:
+                ag = rp.createVariable("radar_antenna_gain_h", "f4")
+                ag.setncattr("units", "dB")
+                ag[:] = radar.AntennaGain
+
+        if first_data.task_config:
+            task = first_data.task_config
+            cp = nc.createGroup("calibration_parameters")
+            cp.setncattr("comment", "Calibration parameters from CMA binary task configuration")
+
+            if task.HorizontalNoise and task.HorizontalNoise != 0.0:
+                noise = cp.createVariable("radar_measured_sky_noise", "f4")
+                noise.setncattr("units", "dB")
+                noise[:] = task.HorizontalNoise
+
+            if task.HorizontalCalibration1 and task.HorizontalCalibration1 != 0.0:
+                cal = cp.createVariable("calibration_offset_h", "f4")
+                cal.setncattr("units", "dB")
+                cal[:] = task.HorizontalCalibration1
