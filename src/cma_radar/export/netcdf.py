@@ -573,8 +573,16 @@ def write_cfradial_nc(
             # Field data
             for key, var in field_vars.items():
                 if key in radial.variable:
-                    moment_value = radial.variable[key].value
+                    moment_value = radial.variable[key].value.copy()
                     n_gates_current = len(moment_value)
+
+                    # Replace manufacturer-specific marker values with _FillValue
+                    # ZHDKAZ uses -200 as blind-zone marker for all moments
+                    moment_value[moment_value == -200.0] = FILL_VALUE
+                    # ZHDKAZ uses -100 as no-reliable-signal marker for velocity/spectrum-width
+                    if key in (2, 3):
+                        moment_value[moment_value == -100.0] = FILL_VALUE
+
                     var[i, :n_gates_current] = moment_value
 
         # Write coordinate data
