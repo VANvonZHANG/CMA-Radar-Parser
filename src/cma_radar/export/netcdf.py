@@ -353,7 +353,9 @@ def write_cfradial_nc(
     if not all_data:
         raise ValueError("No data to write.")
 
-    unique_data, _, max_n_gates = _sort_and_dedup(all_data, source_filenames)
+    unique_data, unique_filenames, max_n_gates = _sort_and_dedup(
+        all_data, source_filenames
+    )
     first_data = unique_data[0]
     n_time = len(unique_data)
 
@@ -396,21 +398,29 @@ def write_cfradial_nc(
         nc.setncattr("longitude", float(site.Longitude) if site else 0.0)
         nc.setncattr("altitude", float(site.AntennaHeight) if site else 0.0)
 
-        # Time coverage
+        # Time coverage (use microsecond precision)
+        first_timestamp = (
+            unique_data[0].radials[0].header.Seconds
+            + unique_data[0].radials[0].header.Microseconds / 1e6
+        )
+        last_timestamp = (
+            unique_data[-1].radials[0].header.Seconds
+            + unique_data[-1].radials[0].header.Microseconds / 1e6
+        )
         first_time = datetime.datetime.fromtimestamp(
-            unique_data[0].radials[0].header.Seconds, datetime.timezone.utc
+            first_timestamp, datetime.timezone.utc
         )
         last_time = datetime.datetime.fromtimestamp(
-            unique_data[-1].radials[0].header.Seconds, datetime.timezone.utc
+            last_timestamp, datetime.timezone.utc
         )
         nc.setncattr("time_coverage_start", first_time.strftime("%Y-%m-%dT%H:%M:%SZ"))
         nc.setncattr("time_coverage_end", last_time.strftime("%Y-%m-%dT%H:%M:%SZ"))
         nc.setncattr("field_names", field_names)
 
         nc.history = f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')} - File created"
-        if source_filenames:
+        if unique_filenames:
             nc.source_files = ", ".join(
-                os.path.basename(f) for f in source_filenames
+                os.path.basename(f) for f in unique_filenames
             )
 
         # --- Root group dimensions and variables ---
@@ -509,7 +519,7 @@ def write_cfradial_nc(
                 cfg["var_name"],
                 "f4",
                 ("time", "range"),
-                fill_value=np.nan,
+                fill_value=FILL_VALUE,
             )
             fv.setncattr("standard_name", cfg["standard_name"])
             fv.setncattr("long_name", cfg["long_name"])

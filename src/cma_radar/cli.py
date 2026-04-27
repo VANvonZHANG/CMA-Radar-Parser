@@ -157,7 +157,10 @@ def parse(
     else:
         out_path = f"{os.path.splitext(file)[0]}.{ext}"
 
-    if format == OutputFormat.nc:
+    if format == OutputFormat.cfradial:
+        console.print("[red]Error:[/red] --format cfradial is only supported for batch processing.")
+        raise typer.Exit(1)
+    elif format == OutputFormat.nc:
         write_nc(cma_data, out_path, file)
     else:
         write_txt(cma_data, out_path)
