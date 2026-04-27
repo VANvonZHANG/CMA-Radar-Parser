@@ -32,3 +32,4 @@ plots/
 # Data files
 *.BIN
 *.bin
+.worktrees/
